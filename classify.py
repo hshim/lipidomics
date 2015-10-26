@@ -157,15 +157,20 @@ def cluster():
   gender = df['Gender'].apply(lambda x: 0 if x=='M' else 1).astype(float)
   pd_status = df['PD_status'].apply(lambda x: 1 if x=='PD' else 0).astype(bool)
   # columns 12:252
-  lipid_names = df.columns.values[12:252]
+  lipid_names = np.array(df.columns.values[12:252])
   lipids = df.ix[:250,12:252].astype(float)
   # remove rows with empty data
   valid_rows = np.all(np.isfinite(lipids), axis=1)
   lipids = lipids[valid_rows]
   gender = np.array(gender[valid_rows])
+  nonzero_cols = np.where(lipids.any(axis=0))[0]
+  lipid_names = lipid_names[nonzero_cols]
+  lipids = lipids[nonzero_cols]
+  N = len(lipid_names)
+  print N
   age = np.array(age[valid_rows])
   pd_status = np.array(pd_status[valid_rows])
-  print pd_status
+  #print pd_status
   #print age
   #print gender
   #print lipid
@@ -174,43 +179,30 @@ def cluster():
   quantile_norm(lipids)
   #np.savetxt('quantile_norm_lipids.csv', lipids, delimiter=",")
 
-  mean = []
-  residual = []
+  # clone pd_status
+  pd_status_cp = np.empty_like (pd_status)
+  pd_status_cp[:] = pd_status
+  p_scores = {}
   ttest = {}
-  for i in range(0, 240):
-    # fit regression line and get residuals
-    response = [row[i] for row in lipids]
-    x = [[gender[j], age[j]] for j in range(0, len(gender))]
-    sm.add_constant(age)
-    est = sm.OLS(response, x)
-    est = est.fit()
-    ys = [est.predict(pt) for pt in x]
-    current_mean = np.mean(ys)
-    mean.append(current_mean)
-    residual_i = [y - current_mean for y in response]
-    residual.append(residual_i)
+  # calculates p-values after shuffling the PD status.
+  # repeat 1000 times.
+  for k in range(0, 1001):
+    mean = []
+    residual = []
+    for i in range(0, N):
+      # fit regression line and get residuals
+      response = [row[i] for row in lipids]
+      x = [[gender[j], age[j]] for j in range(0, len(gender))]
+      sm.add_constant(age)
+      est = sm.OLS(response, x)
+      est = est.fit()
+      ys = [est.predict(pt) for pt in x]
+      current_mean = np.mean(ys)
+      mean.append(current_mean)
+      residual_i = [y - current_mean for y in response]
+      residual.append(residual_i)
 
-    # get t-test score and p-value
-    pd_group = []
-    ctrl_group = []
-    j = 0
-    for is_pd in pd_status:
-      if is_pd:
-        pd_group.append(residual_i[j])
-      else:
-        ctrl_group.append(residual_i[j])
-      j += 1
-
-    t, p = stats.ttest_ind(pd_group, ctrl_group)
-
-    # clone pd_status
-    pd_status_cp = np.empty_like (pd_status)
-    pd_status_cp[:] = pd_status
-    # calculates adjusted p-value by shuffling the PD status and
-    # calculating p-value 1000 times.
-    p_scores = []
-    for k in range(0, 1000):
-      np.random.shuffle(pd_status_cp)
+      # get t-test score and p-value
       pd_group = []
       ctrl_group = []
       j = 0
@@ -221,11 +213,25 @@ def cluster():
           ctrl_group.append(residual_i[j])
         j += 1
 
-      t_tmp, p_tmp = stats.ttest_ind(pd_group, ctrl_group)
-      p_scores.append(p_tmp)
-    adjusted_p = len(filter(lambda x: x < p, p_scores)) / 1000.0
-    print lipid_names[i], t, p, adjusted_p
-    ttest[lipid_names[i]] = (t.item(), p, adjusted_p)
+      t, p = stats.ttest_ind(pd_group, ctrl_group)
+      # record t, p values for unshuffled data
+      if k == 0:
+        ttest[lipid_names[i]] = (t.item(), p)
+        if lipid_names[i] in ['SM d18:1/20:1', 'GM3', 'SM d18:1/22:1']:
+          print lipid_names[i], residual_i, t, p
+      else:
+        if lipid_names[i] in p_scores:
+          p_scores[lipid_names[i]].append(p)
+        else:
+          p_scores[lipid_names[i]] = [p]
+    print k
+    np.random.shuffle(pd_status_cp)
+
+  for i in range(0, N):
+    old_t, old_p = ttest[lipid_names[i]]
+    lipid_p_scores = p_scores[lipid_names[i]]
+    adjusted_p = len(filter(lambda x: x < old_p, lipid_p_scores)) / 1000.0
+    ttest[lipid_names[i]] = (old_t, old_p, adjusted_p)
 
   print json.dumps(ttest)
 
