@@ -182,13 +182,14 @@ def cluster():
   # clone pd_status
   pd_status_cp = np.empty_like (pd_status)
   pd_status_cp[:] = pd_status
-  p_scores = {}
+  min_p_scores = []
   ttest = {}
   # calculates p-values after shuffling the PD status.
   # repeat 1000 times.
   for k in range(0, 1001):
     mean = []
     residual = []
+    min_p_score = 1000
     for i in range(0, N):
       # fit regression line and get residuals
       response = [row[i] for row in lipids]
@@ -200,7 +201,6 @@ def cluster():
       current_mean = np.mean(ys)
       mean.append(current_mean)
       residual_i = [y - current_mean for y in response]
-      residual.append(residual_i)
 
       # get t-test score and p-value
       pd_group = []
@@ -214,30 +214,30 @@ def cluster():
         j += 1
 
       t, p = stats.ttest_ind(pd_group, ctrl_group)
+      # update min_p_score for this k
+      if p < min_p_score:
+        min_p_score = p
       # record t, p values for unshuffled data
       if k == 0:
+        residual.append(residual_i)
         ttest[lipid_names[i]] = (t.item(), p)
         if lipid_names[i] in ['SM d18:1/20:1', 'GM3', 'SM d18:1/22:1']:
           print lipid_names[i], residual_i, t, p
-      else:
-        if lipid_names[i] in p_scores:
-          p_scores[lipid_names[i]].append(p)
-        else:
-          p_scores[lipid_names[i]] = [p]
+    # record min_p_score
+    if k > 0:
+      min_p_scores.append(min_p_score)
     print k
     np.random.shuffle(pd_status_cp)
 
   for i in range(0, N):
     old_t, old_p = ttest[lipid_names[i]]
-    lipid_p_scores = p_scores[lipid_names[i]]
-    adjusted_p = len(filter(lambda x: x < old_p, lipid_p_scores)) / 1000.0
+    adjusted_p = len(filter(lambda x: x < old_p, min_p_scores)) / 1000.0
     ttest[lipid_names[i]] = (old_t, old_p, adjusted_p)
-
   print json.dumps(ttest)
 
   #tree = hcluster.hcluster(residual)
 
-  #hcluster.drawdendrogram(tree, [str(i) + '.png' for i in range(0, 240)], jpeg='cluster.jpg')
+  #hcluster.drawdendrogram(tree, [str(i) + '.png' for i in range(0, N)], jpeg='cluster.jpg')
   #return tree
 
 def json_to_csv(fn):
