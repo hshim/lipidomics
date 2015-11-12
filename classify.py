@@ -151,14 +151,16 @@ def main():
 
 def cluster():
   # prepare/cleanse data
-  df = pd.read_csv('plasma_data_transpose.csv')[:250]
+  df = pd.read_csv('plasma_all_values_transposed.csv')[:250]
+  df.drop(df.columns[[53]], axis=1, inplace=True) # drop empty column
   cols = list(df.columns.values)
-  age = df['Age'].astype(float)
+  age = df['Age'].astype(int)
   gender = df['Gender'].apply(lambda x: 0 if x=='M' else 1).astype(float)
   pd_status = df['PD_status'].apply(lambda x: 1 if x=='PD' else 0).astype(bool)
-  # columns 12:252
-  lipid_names = np.array(df.columns.values[12:252])
-  lipids = df.ix[:250,12:252].astype(float)
+  # columns 12:252X 12:764
+  lipid_names = np.array(df.columns.values[15:766])
+  #print lipid_names
+  lipids = df.ix[:250,15:766].astype(float)
   # remove rows with empty data
   valid_rows = np.all(np.isfinite(lipids), axis=1)
   lipids = lipids[valid_rows]
@@ -170,11 +172,22 @@ def cluster():
   print N
   age = np.array(age[valid_rows])
   pd_status = np.array(pd_status[valid_rows])
-  #print pd_status
-  #print age
-  #print gender
-  #print lipid
 
+  '''
+  filter_male = list(gender.apply(lambda x: False if x==1 else True))
+  #print filter_male
+  lipids = lipids[filter_male]
+  gender = np.array(gender[filter_male])
+  age = np.array(age[filter_male])
+  pd_status = np.array(pd_status[filter_male])
+  '''
+  '''
+  print list(pd_status)
+  print list(age)
+  print list(gender)
+  print lipids
+  print len(lipids), len(pd_status), len(age), len(gender)
+  '''
   lipids = np.ma.array(lipids, mask=False)
   quantile_norm(lipids)
   #np.savetxt('quantile_norm_lipids.csv', lipids, delimiter=",")
@@ -184,9 +197,10 @@ def cluster():
   pd_status_cp[:] = pd_status
   min_p_scores = []
   ttest = {}
+  stat_summary = {}
   # calculates p-values after shuffling the PD status.
   # repeat 1000 times.
-  for k in range(0, 1001):
+  for k in range(0, 10001):
     mean = []
     residual = []
     min_p_score = 1000
@@ -194,9 +208,13 @@ def cluster():
       # fit regression line and get residuals
       response = [row[i] for row in lipids]
       x = [[gender[j], age[j]] for j in range(0, len(gender))]
+      #x = [age[j] for j in range(0, len(age))] # for stratifying gender
       sm.add_constant(age)
       est = sm.OLS(response, x)
       est = est.fit()
+      # regression coefficients
+      #stat_summary[lipid_names[i]] = \
+      #    (est.summary().tables[1].data[1][1], est.summary().tables[1].data[1][2])
       ys = [est.predict(pt) for pt in x]
       current_mean = np.mean(ys)
       mean.append(current_mean)
@@ -221,23 +239,26 @@ def cluster():
       if k == 0:
         residual.append(residual_i)
         ttest[lipid_names[i]] = (t.item(), p)
-        if lipid_names[i] in ['SM d18:1/20:1', 'GM3', 'SM d18:1/22:1']:
-          print lipid_names[i], residual_i, t, p
     # record min_p_score
     if k > 0:
       min_p_scores.append(min_p_score)
-    print k
+    if k % 50 == 0:
+      print k
     np.random.shuffle(pd_status_cp)
+
+    #return stat_summary
 
   for i in range(0, N):
     old_t, old_p = ttest[lipid_names[i]]
-    adjusted_p = len(filter(lambda x: x < old_p, min_p_scores)) / 1000.0
+    adjusted_p = len(filter(lambda x: x < old_p, min_p_scores)) / 10000.0
     ttest[lipid_names[i]] = (old_t, old_p, adjusted_p)
-  print json.dumps(ttest)
+
+  with open('ttest_10000.json', 'a') as f:
+    f.write(json.dumps(ttest))
 
   #tree = hcluster.hcluster(residual)
 
-  #hcluster.drawdendrogram(tree, [str(i) + '.png' for i in range(0, N)], jpeg='cluster.jpg')
+  #hcluster.drawdendrogram(tree, ['figures/' + str(i) + '.png' for i in range(0, N)], jpeg='cluster.jpg')
   #return tree
 
 def json_to_csv(fn):
