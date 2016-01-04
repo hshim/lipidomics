@@ -149,50 +149,9 @@ def main():
     print res
     print "Got " + str(sum(res)) + " out of " + str(len(res))
 
-def cluster():
-  # prepare/cleanse data
-  df = pd.read_csv('plasma_all_values_transposed.csv')[:250]
-  df.drop(df.columns[[53]], axis=1, inplace=True) # drop empty column
-  cols = list(df.columns.values)
-  age = df['Age'].astype(int)
-  gender = df['Gender'].apply(lambda x: 0 if x=='M' else 1).astype(float)
-  pd_status = df['PD_status'].apply(lambda x: 1 if x=='PD' else 0).astype(bool)
-  # columns 12:252X 12:764
-  lipid_names = np.array(df.columns.values[15:766])
-  #print lipid_names
-  lipids = df.ix[:250,15:766].astype(float)
-  # remove rows with empty data
-  valid_rows = np.all(np.isfinite(lipids), axis=1)
-  lipids = lipids[valid_rows]
-  gender = np.array(gender[valid_rows])
-  nonzero_cols = np.where(lipids.any(axis=0))[0]
-  lipid_names = lipid_names[nonzero_cols]
-  lipids = lipids[nonzero_cols]
-  N = len(lipid_names)
-  print N
-  age = np.array(age[valid_rows])
-  pd_status = np.array(pd_status[valid_rows])
-
-  '''
-  filter_male = list(gender.apply(lambda x: False if x==1 else True))
-  #print filter_male
-  lipids = lipids[filter_male]
-  gender = np.array(gender[filter_male])
-  age = np.array(age[filter_male])
-  pd_status = np.array(pd_status[filter_male])
-  '''
-  '''
-  print list(pd_status)
-  print list(age)
-  print list(gender)
-  print lipids
-  print len(lipids), len(pd_status), len(age), len(gender)
-  '''
-  lipids = np.ma.array(lipids, mask=False)
-  quantile_norm(lipids)
-  #np.savetxt('quantile_norm_lipids.csv', lipids, delimiter=",")
-
+def analyze(age, gender, pd_status, lipid_names, lipids, out, num_iter):
   # clone pd_status
+  N = len(lipid_names)
   pd_status_cp = np.empty_like (pd_status)
   pd_status_cp[:] = pd_status
   min_p_scores = []
@@ -200,7 +159,7 @@ def cluster():
   stat_summary = {}
   # calculates p-values after shuffling the PD status.
   # repeat 1000 times.
-  for k in range(0, 10001):
+  for k in range(0, num_iter + 1):
     mean = []
     residual = []
     min_p_score = 1000
@@ -208,7 +167,7 @@ def cluster():
       # fit regression line and get residuals
       response = [row[i] for row in lipids]
       x = [[gender[j], age[j]] for j in range(0, len(gender))]
-      #x = [age[j] for j in range(0, len(age))] # for stratifying gender
+      #x = [age[j] for j in range(0, len(age))] # if stratifying gender
       sm.add_constant(age)
       est = sm.OLS(response, x)
       est = est.fit()
@@ -250,16 +209,145 @@ def cluster():
 
   for i in range(0, N):
     old_t, old_p = ttest[lipid_names[i]]
-    adjusted_p = len(filter(lambda x: x < old_p, min_p_scores)) / 10000.0
+    adjusted_p = len(filter(lambda x: x < old_p, min_p_scores)) / float(num_iter)
     ttest[lipid_names[i]] = (old_t, old_p, adjusted_p)
 
-  with open('ttest_10000.json', 'a') as f:
+  with open(out, 'a') as f:
     f.write(json.dumps(ttest))
 
+  # dendrogram for hierarchical clustering
   #tree = hcluster.hcluster(residual)
-
   #hcluster.drawdendrogram(tree, ['figures/' + str(i) + '.png' for i in range(0, N)], jpeg='cluster.jpg')
-  #return tree
+
+def analyze_lipids():
+  # prepare/cleanse data
+  df = pd.read_csv('plasma_all_values_transposed.csv')[:250]
+  df.drop(df.columns[[53]], axis=1, inplace=True) # drop empty column
+  cols = list(df.columns.values)
+  age = df['Age'].astype(int)
+  gender = df['Gender'].apply(lambda x: 0 if x=='M' else 1).astype(float)
+  pd_status = df['PD_status'].apply(lambda x: 1 if x=='PD' else 0).astype(bool)
+  # columns 12:252X 12:764
+  lipid_names = np.array(df.columns.values[15:766])
+  #print lipid_names
+  lipids = df.ix[:250,15:766].astype(float)
+  # remove rows with empty data
+  valid_rows = np.all(np.isfinite(lipids), axis=1)
+  lipids = lipids[valid_rows]
+  gender = np.array(gender[valid_rows])
+  nonzero_cols = np.where(lipids.any(axis=0))[0]
+  lipid_names = lipid_names[nonzero_cols]
+  lipids = lipids[nonzero_cols]
+  N = len(lipid_names)
+  age = np.array(age[valid_rows])
+  pd_status = np.array(pd_status[valid_rows])
+
+  '''
+  # block for stratifying male
+  filter_male = list(gender.apply(lambda x: False if x==1 else True))
+  #print filter_male
+  lipids = lipids[filter_male]
+  gender = np.array(gender[filter_male])
+  age = np.array(age[filter_male])
+  pd_status = np.array(pd_status[filter_male])
+  '''
+  lipids = np.ma.array(lipids, mask=False)
+  quantile_norm(lipids)
+  #np.savetxt('quantile_norm_lipids.csv', lipids, delimiter=",")
+  analyze(age, gender, pd_status, lipid_names, lipids, 'ttest_10000.json', 10000)
+
+def analyze_links():
+  df = pd.read_csv('link_values.csv')[:246]
+  age = df['Age'].astype(int)
+  gender = df['Gender'].astype(int)
+  pd_status = df['PD_status'].astype(bool)
+  lipid_names = np.array(df.columns.values[3:130])
+  lipids = df.ix[:246,3:130].astype(float)
+
+
+  '''
+  # block for stratifying female
+  filter_female = list(gender.apply(lambda x: False if x==0 else True))
+  print filter_female
+  lipids = lipids[filter_female]
+  gender = np.array(gender[filter_female])
+  age = np.array(age[filter_female])
+  pd_status = np.array(pd_status[filter_female])
+  '''
+
+  lipids = np.ma.array(lipids, mask=False)
+  quantile_norm(lipids)
+  analyze(np.array(age), np.array(gender), np.array(pd_status), lipid_names, lipids, 'ttest_links.json', 1000)
+
+def get_link_values():
+  df = pd.read_csv('plasma_all_values_transposed.csv')[:250]
+  df.drop(df.columns[[53]], axis=1, inplace=True) # drop empty column
+  age = df['Age'].astype(int)
+  gender = df['Gender'].apply(lambda x: 0 if x=='M' else 1).astype(float)
+  pd_status = df['PD_status'].apply(lambda x: 1 if x=='PD' else 0).astype(bool)
+  lipid_names = np.array(df.columns.values[15:766])
+  #print lipid_names
+  lipids = df.ix[:250,15:766].astype(float)
+  # remove rows with empty data
+  valid_rows = np.all(np.isfinite(lipids), axis=1)
+  lipids = lipids[valid_rows]
+  gender = np.array(gender[valid_rows])
+  nonzero_cols = np.where(lipids.any(axis=0))[0]
+  lipid_names = lipid_names[nonzero_cols]
+  lipids = lipids[nonzero_cols]
+  N = len(lipid_names)
+  print N
+  age = np.array(age[valid_rows])
+  pd_status = np.array(pd_status[valid_rows])
+  lipids = np.ma.array(lipids, mask=False)
+  quantile_norm(lipids)
+
+  trans = pd.read_csv('translation.csv')[:21]
+  short = trans['Short name']
+  to = trans['To']
+  dic = {}
+  for i in xrange(len(short)):
+    dic[short[i]] = to[i].split(';')
+  print dic
+  link_lipid_names = []
+  filter_index = []
+  for i, name in enumerate(lipid_names):
+    if name.split()[0] in list(short):
+      link_lipid_names.append(name)
+      filter_index.append(i)
+
+  print link_lipid_names
+  print filter_index
+  lipids = [row[filter_index] for row in lipids]
+  print len(link_lipid_names), len(lipids[0])
+
+  columns = []
+  first = True
+  link_values = []
+  for row in lipids:
+    new_row = []
+    for source_i, name in enumerate(link_lipid_names):
+      source, rest = name.split() if len(name.split()) == 2 else (name.split()[0], '')
+      for target in dic[source]:
+        target_name = target + ' ' + rest if rest else target
+        if target_name in link_lipid_names:
+          target_i = link_lipid_names.index(target_name)
+        else:
+          #print "Couldn't find " + target_name + " from " + name
+          continue
+        if target + '-' + name not in columns:
+          if first:
+            columns.append(source + '-' + target_name)
+          new_row.append(abs(row[source_i] - row[target_i]))
+    if first:
+      first = False
+    link_values.append(new_row)
+
+  print len(age), len(gender), len(pd_status), len(lipids)
+  with open('link_values.csv', 'a') as f:
+    f.write(','.join(['Age', 'Gender', 'PD_status'] + columns) + '\n')
+    for i,row in enumerate(link_values):
+      f.write(str(age[i]) + ',' + str(gender[i]) + ',' + str(pd_status[i]) + ',' + ','.join(str(value) for value in row) + '\n')
 
 def json_to_csv(fn):
   d = json.load(open(fn, 'r'))
@@ -271,11 +359,14 @@ def json_to_csv(fn):
 if __name__=="__main__":
   parser = optparse.OptionParser()
   parser.add_option('-p', '--plot', dest='plot', action="store_true", default=False)
-  parser.add_option('-c', '--cluster', dest='cluster', action="store_true", default=False)
+  parser.add_option('-c', '--lipids', dest='lipids', action="store_true", default=False)
+  parser.add_option('-l', '--link', dest='link', action="store_true", default=False)
   opts, args = parser.parse_args()
   if opts.plot:
     plot()
-  elif opts.cluster:
-    cluster()
+  elif opts.lipids:
+    analyze_lipids()
+  elif opts.link:
+    analyze_links()
   else:
     main()
